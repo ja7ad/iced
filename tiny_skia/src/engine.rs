@@ -144,6 +144,41 @@ impl Engine {
             }
         }
 
+        // A square solid fill is drawn as its physical rectangle, cut to the
+        // clip: tiny-skia rasterizes the whole path and masks per pixel, so a
+        // list-wide row redrawn for a sliver of damage was paid for in full,
+        // once per region. Clipped or not, it takes the same rasterizer, so a
+        // damaged frame blends its edges exactly as a full repaint does.
+        let (path, fill_transform) = match background {
+            Background::Color(_)
+                if fill_border_radius.iter().all(|radius| *radius == 0.0) =>
+            {
+                let visible = match clip_mask {
+                    Some(_) => {
+                        physical_bounds.intersection(&pixel_bounds(clip_bounds))
+                    }
+                    None => Some(physical_bounds),
+                };
+
+                let Some(rect) = visible.and_then(|visible| {
+                    tiny_skia::Rect::from_xywh(
+                        visible.x,
+                        visible.y,
+                        visible.width,
+                        visible.height,
+                    )
+                }) else {
+                    return;
+                };
+
+                (
+                    tiny_skia::PathBuilder::from_rect(rect),
+                    tiny_skia::Transform::identity(),
+                )
+            }
+            _ => (path, transform),
+        };
+
         pixels.fill_path(
             &path,
             &tiny_skia::Paint {
@@ -197,7 +232,7 @@ impl Engine {
                 ..tiny_skia::Paint::default()
             },
             tiny_skia::FillRule::EvenOdd,
-            transform,
+            fill_transform,
             clip_mask,
         );
 
