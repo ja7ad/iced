@@ -43,7 +43,7 @@ pub fn list<T>(
 }
 
 /// Groups the given damage regions that are close together inside the given
-/// bounds.
+/// bounds, or returns the bounds whole once the regions cover a quarter of it.
 pub fn group(mut damage: Vec<Rectangle>, bounds: Rectangle) -> Vec<Rectangle> {
     const AREA_THRESHOLD: f32 = 20_000.0;
 
@@ -74,5 +74,43 @@ pub fn group(mut damage: Vec<Rectangle>, bounds: Rectangle) -> Vec<Rectangle> {
         output.push(current);
     }
 
+    // Regions overlap and each one is redrawn in full, so a frame that moves
+    // most of the window (a scrolled list) costs several full repaints. Past
+    // a quarter of the bounds, one repaint of everything is the cheaper frame.
+    let damaged: f32 = output.iter().map(Rectangle::area).sum();
+
+    if damaged * 4.0 >= bounds.area() {
+        return vec![bounds];
+    }
+
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::Size;
+
+    #[test]
+    fn a_small_region_stays_a_region() {
+        let bounds = Rectangle::with_size(Size::new(100.0, 100.0));
+        let row = Rectangle::new(Point::new(0.0, 10.0), Size::new(100.0, 20.0));
+
+        assert_eq!(group(vec![row], bounds), vec![row]);
+    }
+
+    #[test]
+    fn regions_covering_a_quarter_become_one_full_repaint() {
+        let bounds = Rectangle::with_size(Size::new(100.0, 100.0));
+        let rows = (0..10)
+            .map(|i| {
+                Rectangle::new(
+                    Point::new(0.0, i as f32 * 10.0),
+                    Size::new(100.0, 3.0),
+                )
+            })
+            .collect();
+
+        assert_eq!(group(rows, bounds), vec![bounds]);
+    }
 }
