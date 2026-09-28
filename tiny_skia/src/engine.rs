@@ -42,7 +42,7 @@ impl Engine {
             return;
         }
 
-        let clip_mask = (!physical_bounds.is_within(&clip_bounds))
+        let clip_mask = (!inks_within(physical_bounds, clip_bounds))
             .then_some(clip_mask as &_);
 
         let transform = into_transform(transformation);
@@ -348,7 +348,8 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = match physical_bounds.is_within(&clip_bounds) {
+                let clip_mask = match inks_within(physical_bounds, clip_bounds)
+                {
                     true => None,
                     false => {
                         adjust_clip_mask(clip_mask, clip_bounds);
@@ -386,7 +387,8 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = match physical_bounds.is_within(&clip_bounds) {
+                let clip_mask = match inks_within(physical_bounds, clip_bounds)
+                {
                     true => None,
                     false => {
                         adjust_clip_mask(clip_mask, clip_bounds);
@@ -421,7 +423,8 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = match physical_bounds.is_within(&clip_bounds) {
+                let clip_mask = match inks_within(physical_bounds, clip_bounds)
+                {
                     true => None,
                     false => {
                         adjust_clip_mask(clip_mask, clip_bounds);
@@ -467,7 +470,7 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = (!physical_bounds.is_within(&clip_bounds))
+                let clip_mask = (!inks_within(physical_bounds, clip_bounds))
                     .then_some(clip_mask as &_);
 
                 self.text_pipeline.draw_raw(
@@ -507,7 +510,7 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = (!physical_bounds.is_within(&clip_bounds))
+                let clip_mask = (!inks_within(physical_bounds, clip_bounds))
                     .then_some(clip_mask as &_);
 
                 pixels.fill_path(
@@ -538,7 +541,7 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = (!physical_bounds.is_within(&clip_bounds))
+                let clip_mask = (!inks_within(physical_bounds, clip_bounds))
                     .then_some(clip_mask as &_);
 
                 pixels.stroke_path(
@@ -569,7 +572,7 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = (!physical_bounds.is_within(&_clip_bounds))
+                let clip_mask = (!inks_within(physical_bounds, _clip_bounds))
                     .then_some(_clip_mask as &_);
 
                 let center = physical_bounds.center();
@@ -599,7 +602,7 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = (!physical_bounds.is_within(&_clip_bounds))
+                let clip_mask = (!inks_within(physical_bounds, _clip_bounds))
                     .then_some(_clip_mask as &_);
 
                 let center = physical_bounds.center();
@@ -833,6 +836,24 @@ fn rounded_box_sdf(
     (x.powf(2.0) + y.powf(2.0)).sqrt() - radius
 }
 
+/// Whether drawing `bounds` unclipped stays inside `clip`. A fractional edge
+/// is anti-aliased into the pixel it cuts through, so the test is on the
+/// bounds grown to whole pixels: drawn unclipped, a shape sitting exactly on
+/// a layer's fractional edge would ink one pixel past it on a full repaint and
+/// not on a damaged one, which clips it.
+fn inks_within(bounds: Rectangle, clip: Rectangle) -> bool {
+    let x = bounds.x.floor();
+    let y = bounds.y.floor();
+
+    Rectangle {
+        x,
+        y,
+        width: (bounds.x + bounds.width).ceil() - x,
+        height: (bounds.y + bounds.height).ceil() - y,
+    }
+    .is_within(&clip)
+}
+
 pub fn adjust_clip_mask(clip_mask: &mut tiny_skia::Mask, bounds: Rectangle) {
     clip_mask.clear();
 
@@ -857,4 +878,53 @@ pub fn adjust_clip_mask(clip_mask: &mut tiny_skia::Mask, bounds: Rectangle) {
         false,
         tiny_skia::Transform::default(),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Renderer;
+    use crate::core::renderer::{Quad, Renderer as _};
+    use crate::core::{Background, Color, Font, Pixels, Rectangle, Size};
+    use crate::graphics::Viewport;
+
+    fn pixel(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
+        let i = ((y * width + x) * 4) as usize;
+        [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
+    }
+
+    #[test]
+    fn a_quad_on_a_fractional_layer_edge_does_not_ink_past_the_layer() {
+        let (width, height) = (20, 10);
+        let layer = Rectangle::new([5.75, 0.0].into(), Size::new(14.25, 10.0));
+
+        let mut renderer = Renderer::new(Font::default(), Pixels(16.0));
+        renderer.start_layer(layer);
+        renderer.fill_quad(
+            Quad {
+                bounds: layer,
+                ..Quad::default()
+            },
+            Background::Color(Color::BLACK),
+        );
+        renderer.end_layer();
+
+        let mut pixmap = tiny_skia::Pixmap::new(width, height).unwrap();
+        let mut clip_mask = tiny_skia::Mask::new(width, height).unwrap();
+        let viewport =
+            Viewport::with_physical_size(Size::new(width, height), 1.0);
+        renderer.draw(
+            &mut pixmap.as_mut(),
+            &mut clip_mask,
+            &viewport,
+            &[Rectangle::with_size(Size::new(width as f32, height as f32))],
+            Color::WHITE,
+        );
+
+        assert_eq!(
+            pixel(pixmap.data(), width, 5, 5),
+            [255, 255, 255, 255],
+            "pixel 5's center lies outside the layer, so the layer must not touch it"
+        );
+        assert_eq!(pixel(pixmap.data(), width, 6, 5), [0, 0, 0, 255]);
+    }
 }

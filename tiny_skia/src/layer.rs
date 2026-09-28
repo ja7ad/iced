@@ -246,7 +246,9 @@ impl Layer {
                     |text| {
                         text.visible_bounds()
                             .into_iter()
-                            .map(|bounds| bounds.expand(1.0) * text_a.transformation())
+                            .map(|bounds| {
+                                bounds.expand(1.0) * text_a.transformation()
+                            })
                             .collect()
                     },
                     |text_a, text_b| text_a == text_b,
@@ -451,8 +453,10 @@ mod tests {
 
     #[test]
     fn changed_text_damages_the_pixels_its_glyphs_bleed_into() {
-        let damage = Layer::damage(&layer_with_text("1.000"), &layer_with_text("2.000"));
-        let covered = Rectangle::new(Point::new(9.5, 19.0), Size::new(42.0, 18.0));
+        let damage =
+            Layer::damage(&layer_with_text("1.000"), &layer_with_text("2.000"));
+        let covered =
+            Rectangle::new(Point::new(9.5, 19.0), Size::new(42.0, 18.0));
 
         assert!(
             damage
