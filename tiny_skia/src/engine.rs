@@ -38,7 +38,7 @@ impl Engine {
     ) {
         let physical_bounds = quad.bounds * transformation;
 
-        if !clip_bounds.intersects(&physical_bounds) {
+        if !clip_bounds.intersects(&pixel_bounds(physical_bounds)) {
             return;
         }
 
@@ -344,7 +344,7 @@ impl Engine {
                     Rectangle::new(*position, paragraph.min_bounds)
                         * transformation;
 
-                if !clip_bounds.intersects(&physical_bounds) {
+                if !clip_bounds.intersects(&pixel_bounds(physical_bounds)) {
                     return;
                 }
 
@@ -383,7 +383,7 @@ impl Engine {
                 let physical_bounds =
                     Rectangle::new(*position, editor.bounds) * transformation;
 
-                if !clip_bounds.intersects(&physical_bounds) {
+                if !clip_bounds.intersects(&pixel_bounds(physical_bounds)) {
                     return;
                 }
 
@@ -419,7 +419,7 @@ impl Engine {
             } => {
                 let physical_bounds = *local_clip_bounds * transformation;
 
-                if !clip_bounds.intersects(&physical_bounds) {
+                if !clip_bounds.intersects(&pixel_bounds(physical_bounds)) {
                     return;
                 }
 
@@ -466,7 +466,7 @@ impl Engine {
                     ),
                 ) * transformation;
 
-                if !clip_bounds.intersects(&physical_bounds) {
+                if !clip_bounds.intersects(&pixel_bounds(physical_bounds)) {
                     return;
                 }
 
@@ -506,7 +506,7 @@ impl Engine {
                     } * transformation
                 };
 
-                if !clip_bounds.intersects(&physical_bounds) {
+                if !clip_bounds.intersects(&pixel_bounds(physical_bounds)) {
                     return;
                 }
 
@@ -537,7 +537,7 @@ impl Engine {
                     } * transformation
                 };
 
-                if !clip_bounds.intersects(&physical_bounds) {
+                if !clip_bounds.intersects(&pixel_bounds(physical_bounds)) {
                     return;
                 }
 
@@ -568,7 +568,7 @@ impl Engine {
             Image::Raster { image, bounds, .. } => {
                 let physical_bounds = *bounds * _transformation;
 
-                if !_clip_bounds.intersects(&physical_bounds) {
+                if !_clip_bounds.intersects(&pixel_bounds(physical_bounds)) {
                     return;
                 }
 
@@ -598,7 +598,7 @@ impl Engine {
             Image::Vector { svg, bounds, .. } => {
                 let physical_bounds = *bounds * _transformation;
 
-                if !_clip_bounds.intersects(&physical_bounds) {
+                if !_clip_bounds.intersects(&pixel_bounds(physical_bounds)) {
                     return;
                 }
 
@@ -842,6 +842,11 @@ fn rounded_box_sdf(
 /// a layer's fractional edge would ink one pixel past it on a full repaint and
 /// not on a damaged one, which clips it.
 fn inks_within(bounds: Rectangle, clip: Rectangle) -> bool {
+    pixel_bounds(bounds).is_within(&clip)
+}
+
+/// `bounds` grown outward to whole pixels.
+fn pixel_bounds(bounds: Rectangle) -> Rectangle {
     let x = bounds.x.floor();
     let y = bounds.y.floor();
 
@@ -851,7 +856,6 @@ fn inks_within(bounds: Rectangle, clip: Rectangle) -> bool {
         width: (bounds.x + bounds.width).ceil() - x,
         height: (bounds.y + bounds.height).ceil() - y,
     }
-    .is_within(&clip)
 }
 
 pub fn adjust_clip_mask(clip_mask: &mut tiny_skia::Mask, bounds: Rectangle) {
@@ -926,5 +930,52 @@ mod tests {
             "pixel 5's center lies outside the layer, so the layer must not touch it"
         );
         assert_eq!(pixel(pixmap.data(), width, 6, 5), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn damage_starting_inside_a_quads_last_pixel_still_redraws_its_edge() {
+        let (width, height) = (20, 10);
+        let viewport =
+            Viewport::with_physical_size(Size::new(width, height), 1.0);
+        let whole =
+            Rectangle::with_size(Size::new(width as f32, height as f32));
+
+        let mut renderer = Renderer::new(Font::default(), Pixels(16.0));
+        renderer.fill_quad(
+            Quad {
+                bounds: Rectangle::new(
+                    [0.0, 0.0].into(),
+                    Size::new(20.0, 2.375),
+                ),
+                ..Quad::default()
+            },
+            Background::Color(Color::BLACK),
+        );
+
+        let mut clip_mask = tiny_skia::Mask::new(width, height).unwrap();
+        let mut full = tiny_skia::Pixmap::new(width, height).unwrap();
+        renderer.draw(
+            &mut full.as_mut(),
+            &mut clip_mask,
+            &viewport,
+            &[whole],
+            Color::WHITE,
+        );
+
+        let mut damaged = full.clone();
+        renderer.draw(
+            &mut damaged.as_mut(),
+            &mut clip_mask,
+            &viewport,
+            &[Rectangle::new([0.0, 2.375].into(), Size::new(20.0, 7.625))],
+            Color::WHITE,
+        );
+
+        assert_ne!(pixel(full.data(), width, 5, 2), [255, 255, 255, 255]);
+        assert_eq!(
+            pixel(damaged.data(), width, 5, 2),
+            pixel(full.data(), width, 5, 2),
+            "row 2 is repainted by the damage, so the quad's edge must be too"
+        );
     }
 }
