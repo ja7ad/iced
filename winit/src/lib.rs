@@ -1446,7 +1446,7 @@ fn run_action<'a, P, C>(
             }
             window::Action::Resize(id, size) => {
                 if let Some(window) = window_manager.get_mut(id) {
-                    let _ = window.raw.request_inner_size(
+                    let applied = window.raw.request_inner_size(
                         winit::dpi::LogicalSize {
                             width: size.width,
                             height: size.height,
@@ -1455,6 +1455,32 @@ fn run_action<'a, P, C>(
                             window.state.scale_factor(),
                         )),
                     );
+
+                    // `Some` means the size was applied at once (Wayland) and
+                    // winit sends no `Resized` for it; without one the surface
+                    // and layout stay at the old size.
+                    if let Some(new_size) = applied {
+                        let current = window.state.physical_size();
+
+                        if (new_size.width, new_size.height)
+                            != (current.width, current.height)
+                        {
+                            let resized =
+                                winit::event::WindowEvent::Resized(new_size);
+
+                            window.state.update(program, &window.raw, &resized);
+
+                            if let Some(event) = conversion::window_event(
+                                resized,
+                                window.state.scale_factor(),
+                                window.state.modifiers(),
+                            ) {
+                                events.push((id, event));
+                            }
+
+                            window.raw.request_redraw();
+                        }
+                    }
                 }
             }
             window::Action::SetMinSize(id, size) => {
